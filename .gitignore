@@ -1,0 +1,16 @@
+# Installed dependencies and generated build files.
+node_modules/
+web/dist/
+
+# Local configuration and machine-generated files.
+.env
+.env.*
+!.env.example
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local assignment instructions.
+Instructions/
