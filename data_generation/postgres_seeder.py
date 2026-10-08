@@ -1,35 +1,47 @@
+import os
 import random
 from decimal import Decimal
+from datetime import date, datetime, timedelta, timezone
 
-from datetime import date, timedelta
 import psycopg2
 from faker import Faker
 from psycopg2.extras import execute_values
 
-DB_HOST = "localhost"
-DB_NAME = "stayspot"
-DB_USER = "postgres"
-DB_PASSWORD = "Alfa@123"
+# Prefer env vars so credentials are never committed. Defaults suit Postgres.app local trust auth.
+DB_HOST = os.environ.get("STAYSPOT_PG_HOST", "localhost")
+DB_NAME = os.environ.get("STAYSPOT_PG_DB", "stayspot")
+DB_USER = os.environ.get("STAYSPOT_PG_USER", os.environ.get("USER", "postgres"))
+DB_PASSWORD = os.environ.get("STAYSPOT_PG_PASSWORD", "")
+DB_PORT = os.environ.get("STAYSPOT_PG_PORT", "5432")
 
-GUEST_COUNT = 10000
-PROPERTY_COUNT = 5000
-BOOKING_COUNT = 100000
+GUEST_COUNT = 10_000
+PROPERTY_COUNT = 5_000
+BOOKING_COUNT = 100_000
 
+random.seed(42)
 fake = Faker()
+fake.seed_instance(42)
 
 
 def connect():
-    return psycopg2.connect(
-        host=DB_HOST,
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-    )
+    kwargs = {
+        "host": DB_HOST,
+        "port": DB_PORT,
+        "dbname": DB_NAME,
+        "user": DB_USER,
+    }
+    if DB_PASSWORD:
+        kwargs["password"] = DB_PASSWORD
+    return psycopg2.connect(**kwargs)
 
 
 def generate_data():
     conn = connect()
     cur = conn.cursor()
+
+    cur.execute("SELECT EXISTS (SELECT 1 FROM guests)")
+    if cur.fetchone()[0]:
+        raise RuntimeError("Refusing to append seed data: guests already exist. Use an empty database.")
 
     print("Inserting guests...")
     guest_rows = [
@@ -79,10 +91,10 @@ def generate_data():
         nights = (check_out - check_in).days
         total_cost = (base_price * nights).quantize(Decimal("0.01"))
 
-        
-
         if balance < total_cost:
-            continue
+            # Top-ups go through the same audit trigger and guarantee progress.
+            cur.execute("UPDATE guests SET wallet_balance = wallet_balance + 10000 WHERE id = %s", (guest_id,))
+            balance += Decimal("10000")
 
         if guest_id not in checked_in and random.random() < 0.02:
             status = "CHECKED_IN"
@@ -97,12 +109,13 @@ def generate_data():
             (total_cost, guest_id),
         )
         cur.execute(
-                    """INSERT INTO bookings
-                    (guest_id, property_id, check_in, check_out, total_cost, status)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    """,
-                    (guest_id, property_id, check_in, check_out, total_cost, status),
-                )
+            """INSERT INTO bookings
+            (guest_id, property_id, check_in, check_out, total_cost, status, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (guest_id, property_id, check_in, check_out, total_cost, status,
+             datetime.now(timezone.utc) - timedelta(days=random.randint(0, 59))),
+        )
         guests[g_idx][1] = balance - total_cost
         inserted += 1
 

@@ -4,12 +4,24 @@
 // Run with: mongosh <connection_string> 01_collections_and_indexes.js
 // ============================================================
 
-db = db.getSiblingDB("stayspot");
+db = db.getSiblingDB(process.env.STAYSPOT_MONGO_DB || "stayspot");
+
+// Reapply validators without deleting existing documents.
+function ensureCollection(name, options) {
+  if (db.getCollectionNames().includes(name)) {
+    const result = db.runCommand({collMod: name, ...options});
+    if (result.ok !== 1) {
+      throw new Error(`Cannot update validator for ${name}: ${JSON.stringify(result)}`);
+    }
+  } else {
+    db.createCollection(name, options);
+  }
+}
 
 // ------------------------------------------------------------
 // PropertyAmenities - flexible catalog docs
 // ------------------------------------------------------------
-db.createCollection("PropertyAmenities", {
+ensureCollection("PropertyAmenities", {
   validator: {
     $jsonSchema: {
       bsonType: "object",
@@ -36,7 +48,7 @@ db.createCollection("PropertyAmenities", {
 // ------------------------------------------------------------
 // PropertyReviews - structured reviews
 // ------------------------------------------------------------
-db.createCollection("PropertyReviews", {
+ensureCollection("PropertyReviews", {
   validator: {
     $jsonSchema: {
       bsonType: "object",
@@ -56,7 +68,7 @@ db.createCollection("PropertyReviews", {
 // ------------------------------------------------------------
 // SearchSessions - geospatial pin-drop logs
 // ------------------------------------------------------------
-db.createCollection("SearchSessions", {
+ensureCollection("SearchSessions", {
   validator: {
     $jsonSchema: {
       bsonType: "object",
