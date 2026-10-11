@@ -1,5 +1,6 @@
 import os
 import random
+from itertools import product
 from decimal import Decimal
 from datetime import date, datetime, timedelta, timezone
 
@@ -21,6 +22,34 @@ BOOKING_COUNT = 100_000
 random.seed(42)
 fake = Faker()
 fake.seed_instance(42)
+
+
+NAMES = (
+    "Willow", "Cedar", "Maple", "Juniper", "Laurel", "Magnolia", "Aspen",
+    "Birch", "Elm", "Oak", "Olive", "Hazel", "Rowan", "Linden", "Alder",
+    "Ivy", "Jasmine", "Clover", "Fern", "Sage", "Rose", "Dahlia", "Iris",
+    "Camellia", "Wisteria",
+)
+SETTINGS = (
+    "Courtyard", "Grove", "Terrace", "Mews", "Lane", "Place", "Court",
+    "Square", "Walk", "Park", "Circle", "Crescent", "Gardens", "Row",
+    "Way", "Corner", "Close", "Avenue", "Commons", "Heights", "Gate",
+    "Haven", "Nook", "Retreat", "House",
+)
+STAY_TYPES = (
+    "Apartment", "Studio", "Loft", "Suite", "Townhouse", "Cottage",
+    "Residence", "Flat",
+)
+
+
+def generate_property_names(count, seed=42):
+    """Return unique names without numeric suffixes or real-location claims."""
+    names = [f"{name} {setting} {kind}" for name, setting, kind
+             in product(NAMES, SETTINGS, STAY_TYPES)]
+    if not 0 <= count <= len(names):
+        raise ValueError(f"Choose between 0 and {len(names)} property names.")
+    random.Random(seed).shuffle(names)
+    return names[:count]
 
 
 def connect():
@@ -60,12 +89,12 @@ def generate_data():
     print("Inserting properties...")
     property_rows = [
         (
-            fake.sentence(nb_words=4).rstrip("."),
+            title,
             round(random.uniform(50, 200), 2),
             random.uniform(40.70, 40.80),
             random.uniform(-74.05, -73.85),
         )
-        for _ in range(PROPERTY_COUNT)
+        for title in generate_property_names(PROPERTY_COUNT)
     ]
     property_ids = execute_values(
         cur,
