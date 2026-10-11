@@ -56,6 +56,7 @@ ensureCollection("PropertyReviews", {
       properties: {
         property_id: { bsonType: "string" },
         guest_id:    { bsonType: "string" },
+        booking_id:  { bsonType: "string" },
         rating:      { bsonType: "int", minimum: 1, maximum: 5 },
         tags:        { bsonType: "array", items: { bsonType: "string" } },
         comment:     { bsonType: "string" },
@@ -115,3 +116,9 @@ db.PropertyReviews.createIndex({ tags: 1 });
 db.PropertyAmenities.createIndex({ property_id: 1 }, { unique: true });
 
 print("StaySpot collections + indexes created.");
+
+// Historical seeded reviews have no booking_id; uniqueness applies to submitted stay reviews.
+db.PropertyReviews.createIndex(
+  { booking_id: 1 },
+  { unique: true, partialFilterExpression: { booking_id: { $type: "string" } }, name: "one_review_per_booking" }
+);

@@ -9,6 +9,7 @@ import {
   page,
   range,
   coordinates,
+  bookingToday,
 } from "./helpers.js";
 
 export const app = express();
@@ -128,6 +129,10 @@ async function quote(input, client = pool, lock = false) {
   uuid(input.property_id, "property_id");
   date(input.check_in, "check_in");
   date(input.check_out, "check_out");
+  if (input.check_in < bookingToday())
+    fail(400, "Check-in cannot be before today.", {
+      fields: { check_in: "Choose today or a later date." },
+    });
   if (input.check_out <= input.check_in)
     fail(400, "Check-out must be after check-in.", {
       fields: { check_out: "Choose a later date." },
@@ -183,14 +188,12 @@ app.post("/api/bookings", async (req, res) => {
       )
     ).rows[0];
     await client.query("COMMIT");
-    res
-      .status(201)
-      .json({
-        booking,
-        balance_before: q.wallet_balance,
-        balance_after: audit.balance_after,
-        audit,
-      });
+    res.status(201).json({
+      booking,
+      balance_before: q.wallet_balance,
+      balance_after: audit.balance_after,
+      audit,
+    });
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -246,6 +249,63 @@ app.patch("/api/bookings/:id/status", async (req, res) => {
   } finally {
     client.release();
   }
+});
+
+// A completed stay can receive one review; MongoDB enforces uniqueness under races.
+app.get("/api/bookings/:id/review", async (req, res) => {
+  const booking = await record("bookings", req.params.id);
+  res.json(
+    await mongo
+      .collection("PropertyReviews")
+      .findOne({ booking_id: booking.id }, { projection: { _id: 0 } }),
+  );
+});
+app.post("/api/bookings/:id/review", async (req, res) => {
+  const booking = await record("bookings", req.params.id);
+  const guestId = uuid(req.body.guest_id, "guest_id");
+  if (guestId !== booking.guest_id)
+    fail(403, "Select the guest who made this booking to write its review.");
+  if (booking.status !== "COMPLETED")
+    fail(409, "You can review this property after completing your stay.", {
+      code: "STAY_NOT_COMPLETED",
+    });
+  const { rating, tags = [], comment = "" } = req.body;
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5)
+    fail(400, "Choose a rating from 1 to 5 stars.", {
+      fields: { rating: "Choose 1 to 5 stars." },
+    });
+  if (
+    !Array.isArray(tags) ||
+    tags.length > 12 ||
+    tags.some(
+      (tag) =>
+        typeof tag !== "string" ||
+        tag.length > 40 ||
+        !/^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(tag),
+    )
+  )
+    fail(400, "Choose up to 12 valid feedback tags.");
+  if (typeof comment !== "string" || comment.length > 2000)
+    fail(400, "Keep your written review within 2,000 characters.");
+  const review = {
+    booking_id: booking.id,
+    property_id: booking.property_id,
+    guest_id: booking.guest_id,
+    rating,
+    tags: [...new Set(tags)],
+    comment: comment.trim(),
+    created_at: new Date(),
+  };
+  try {
+    await mongo.collection("PropertyReviews").insertOne({ ...review });
+  } catch (error) {
+    if (error.code === 11000)
+      fail(409, "A review has already been submitted for this booking.", {
+        code: "REVIEW_EXISTS",
+      });
+    throw error;
+  }
+  res.status(201).json(review);
 });
 
 // Aggregate across the entire selected period, independently of the visible audit page.
@@ -405,13 +465,11 @@ app.post("/api/search/sessions", async (req, res) => {
   const point = coordinates(req.body),
     id = randomUUID(),
     timestamp = new Date();
-  await mongo
-    .collection("SearchSessions")
-    .insertOne({
-      session_id: id,
-      location: { type: "Point", coordinates: point },
-      created_at: timestamp,
-    });
+  await mongo.collection("SearchSessions").insertOne({
+    session_id: id,
+    location: { type: "Point", coordinates: point },
+    created_at: timestamp,
+  });
   res.status(201).json({ id, coordinates: point, timestamp });
 });
 app.get("/api/reviews/analytics", async (req, res) => {
@@ -458,16 +516,14 @@ app.use((req, res) =>
 app.use((error, req, res, next) => {
   const status = error.status || (error.code === "23505" ? 409 : 500);
   if (status === 500) console.error(error);
-  res
-    .status(status)
-    .json({
-      error: {
-        code: status === 500 ? "SERVER_ERROR" : "REQUEST_ERROR",
-        message:
-          status === 500
-            ? "The request could not be completed. Please try again."
-            : error.message,
-        ...error.details,
-      },
-    });
+  res.status(status).json({
+    error: {
+      code: status === 500 ? "SERVER_ERROR" : "REQUEST_ERROR",
+      message:
+        status === 500
+          ? "The request could not be completed. Please try again."
+          : error.message,
+      ...error.details,
+    },
+  });
 });

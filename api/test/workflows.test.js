@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { app } from "../src/app.js";
+import { bookingToday } from "../src/helpers.js";
 import { pool, mongo, closeDatabases } from "../src/db.js";
 
 // Exercise real HTTP routes with isolated records and remove only those fixtures afterward.
@@ -22,11 +23,16 @@ test("StaySpot API workflows against local PostgreSQL and MongoDB", async (t) =>
     });
     return { status: response.status, data: await response.json() };
   }
+  const today = bookingToday();
+  const dayAfter = (days) =>
+    new Date(Date.parse(`${today}T00:00:00Z`) + days * 86400000)
+      .toISOString()
+      .slice(0, 10);
   const input = {
     guest_id: guest,
     property_id: property,
-    check_in: "2026-11-01",
-    check_out: "2026-11-03",
+    check_in: dayAfter(1),
+    check_out: dayAfter(3),
   };
   try {
     await pool.query(
@@ -37,14 +43,12 @@ test("StaySpot API workflows against local PostgreSQL and MongoDB", async (t) =>
       "INSERT INTO properties(id,title,base_price,latitude,longitude) VALUES ($1,$2,25,12.9716,77.5946)",
       [property, `API test ${property}`],
     );
-    await mongo
-      .collection("PropertyAmenities")
-      .insertOne({
-        property_id: property,
-        house_rules: ["No smoking"],
-        accessibility_features: ["Elevator"],
-        amenities: { wifi: true },
-      });
+    await mongo.collection("PropertyAmenities").insertOne({
+      property_id: property,
+      house_rules: ["No smoking"],
+      accessibility_features: ["Elevator"],
+      amenities: { wifi: true },
+    });
     await mongo.collection("PropertyReviews").insertMany([
       {
         property_id: property,
@@ -99,6 +103,45 @@ test("StaySpot API workflows against local PostgreSQL and MongoDB", async (t) =>
         400,
       );
     });
+    await t.test(
+      "past check-ins are rejected by quotes and bookings without writes",
+      async () => {
+        for (const path of ["/bookings/quote", "/bookings"]) {
+          const result = await call(path, "POST", {
+            ...input,
+            check_in: dayAfter(-1),
+            check_out: dayAfter(1),
+          });
+          assert.equal(result.status, 400);
+          assert.equal(
+            result.data.error.fields.check_in,
+            "Choose today or a later date.",
+          );
+        }
+        assert.equal(
+          (
+            await call("/bookings/quote", "POST", {
+              ...input,
+              check_in: today,
+              check_out: dayAfter(1),
+            })
+          ).status,
+          200,
+        );
+        assert.equal(
+          (await call(`/guests/${guest}`)).data.wallet_balance,
+          "1000.00",
+        );
+        assert.equal(
+          (await call(`/guests/${guest}/audit`)).data.items.length,
+          0,
+        );
+        assert.equal(
+          (await call(`/bookings?guest_id=${guest}`)).data.items.length,
+          0,
+        );
+      },
+    );
     await t.test(
       "booking returns exact booking and trigger audit identifiers",
       async () => {
@@ -248,6 +291,79 @@ test("StaySpot API workflows against local PostgreSQL and MongoDB", async (t) =>
         assert.equal(
           (await call(`/properties/${property}/amenities`)).data.amenities.wifi,
           true,
+        );
+      },
+    );
+    await t.test(
+      "completed stays accept one guest review, including concurrent submissions",
+      async () => {
+        const reviewPath = `/bookings/${booking}/review`;
+        const review = {
+          guest_id: guest,
+          rating: 5,
+          tags: ["clean", "clean"],
+          comment: "  A lovely stay.  ",
+        };
+        assert.equal((await call(reviewPath)).data, null);
+        assert.equal(
+          (await call(`/bookings/${secondBooking}/review`, "POST", review))
+            .status,
+          409,
+        );
+        assert.equal(
+          (await call(reviewPath, "POST", { ...review, guest_id: poor }))
+            .status,
+          403,
+        );
+        for (const invalid of [
+          { rating: 0 },
+          { rating: 6 },
+          { rating: 2.5 },
+          { rating: "5" },
+          { tags: "clean" },
+          { tags: ["<script>"] },
+          { comment: "x".repeat(2001) },
+        ]) {
+          assert.equal(
+            (await call(reviewPath, "POST", { ...review, ...invalid })).status,
+            400,
+          );
+        }
+        const results = await Promise.all([
+          call(reviewPath, "POST", review),
+          call(reviewPath, "POST", review),
+        ]);
+        assert.deepEqual(
+          results.map((result) => result.status).sort(),
+          [201, 409],
+        );
+        assert.equal(
+          results.find((result) => result.status === 409).data.error.code,
+          "REVIEW_EXISTS",
+        );
+        const saved = (await call(reviewPath)).data;
+        assert.equal(saved.booking_id, booking);
+        assert.equal(saved.property_id, property);
+        assert.equal(saved.guest_id, guest);
+        assert.deepEqual(saved.tags, ["clean"]);
+        assert.equal(saved.comment, "A lovely stay.");
+        assert.equal(
+          await mongo
+            .collection("PropertyReviews")
+            .countDocuments({ booking_id: booking }),
+          1,
+        );
+        const analytics = (
+          await call(`/reviews/analytics?property_id=${property}`)
+        ).data;
+        assert.equal(analytics.overallAverage[0].totalReviews, 3);
+        assert.equal(
+          analytics.topTags.find((tag) => tag._id === "clean").count,
+          3,
+        );
+        assert.equal(
+          (await call(`/guests/${guest}`)).data.wallet_balance,
+          "900.00",
         );
       },
     );

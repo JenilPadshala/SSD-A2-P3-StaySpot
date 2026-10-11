@@ -100,3 +100,13 @@ export function coordinates(input) {
     );
   return [longitude, latitude];
 }
+
+// Booking cutoffs use the application's India calendar day, independent of host timezone.
+export function bookingToday(now = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
