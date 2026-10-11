@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { requestFailure } from "./request-errors";
 
 export const GuestContext = createContext(null);
 export const useGuest = () => useContext(GuestContext); // Share only the demo actor across screens.
@@ -33,31 +34,20 @@ export async function request(path, method = "GET", body, signal) {
     });
   } catch (error) {
     if (error.name === "AbortError") throw error;
-    throw Object.assign(
-      new Error(
-        method === "GET"
-          ? "Could not connect. Please try again."
-          : "Connection lost. Check the booking list or current status before trying again; the request may have completed.",
-      ),
-      { uncertain: method !== "GET" },
-    );
+    throw requestFailure(path, method);
   }
-  // A stopped API can produce an empty proxy response instead of JSON.
+  // An unreadable response also leaves a mutation's outcome unknown.
   let result;
   try {
     result = await response.json();
   } catch {
-    throw Object.assign(
-      new Error(
-        "The server response was interrupted. Please check the current state before retrying.",
-      ),
-      { uncertain: method !== "GET" },
-    );
+    throw requestFailure(path, method);
   }
   if (!response.ok)
     throw Object.assign(
       new Error(result.error?.message || "Request failed."),
       result.error,
+      { status: response.status },
     );
   return result;
 }
@@ -65,6 +55,7 @@ export async function request(path, method = "GET", body, signal) {
 // Abort old reads when filters change to avoid showing late responses for a previous selection.
 export function useApi(path) {
   const [state, setState] = useState({
+    path,
     data: null,
     loading: true,
     error: null,
@@ -72,20 +63,27 @@ export function useApi(path) {
   const [version, setVersion] = useState(0);
   useEffect(() => {
     if (!path) {
-      setState({ data: null, loading: false, error: null });
+      setState({ path, data: null, loading: false, error: null });
       return;
     }
     const controller = new AbortController();
-    setState({ data: null, loading: true, error: null });
+    setState({ path, data: null, loading: true, error: null });
     request(path, "GET", undefined, controller.signal)
-      .then((data) => setState({ data, loading: false, error: null }))
+      .then((data) => {
+        if (!controller.signal.aborted)
+          setState({ path, data, loading: false, error: null });
+      })
       .catch((error) => {
         if (error.name !== "AbortError")
-          setState({ data: null, loading: false, error });
+          setState({ path, data: null, loading: false, error });
       });
     return () => controller.abort();
   }, [path, version]);
-  return { ...state, reload: () => setVersion((n) => n + 1) };
+  const current =
+    state.path === path
+      ? state
+      : { data: null, loading: Boolean(path), error: null };
+  return { ...current, reload: () => setVersion((n) => n + 1) };
 }
 
 // Keep failures actionable, including the active booking that blocks check-in.
@@ -114,7 +112,9 @@ export function ErrorBox({ error, retry }) {
           View active booking →
         </Link>
       )}
-      {error.uncertain && <Link to="/bookings">Check bookings →</Link>}
+      {error.recoveryHref && (
+        <Link to={error.recoveryHref}>{error.recoveryLabel}</Link>
+      )}
       {retry && <button onClick={retry}>Retry</button>}
     </div>
   );
@@ -241,6 +241,7 @@ export function RecordPicker({
   onChange,
   label,
   allowAll = false,
+  onMissing,
 }) {
   const [search, setSearch] = useState(""),
     [term, setTerm] = useState("");
@@ -250,6 +251,9 @@ export function RecordPicker({
   }, [search]);
   const state = useApi(`/${type}?${query({ q: term, limit: 25 })}`);
   const selected = useApi(value ? `/${type}/${value}` : null);
+  useEffect(() => {
+    if (selected.error?.status === 404 && onMissing) onMissing();
+  }, [selected.error, onMissing]);
   const rows = state.data?.items || [];
   const options =
     value && selected.data && !rows.some((row) => row.id === value)
@@ -276,6 +280,9 @@ export function RecordPicker({
       </Field>
       {state.loading && <small role="status">Searching…</small>}
       <ErrorBox error={state.error} retry={state.reload} />
+      {!state.error && (
+        <ErrorBox error={selected.error} retry={selected.reload} />
+      )}
       {!state.loading && !state.error && !rows.length && (
         <small>No matches.</small>
       )}

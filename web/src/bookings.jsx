@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
+import { BookingReview } from "./booking-review";
 import {
   useApi,
   useGuest,
@@ -22,7 +23,14 @@ import {
 export function BookingForm() {
   const { id } = useParams(),
     { guestId, refreshGuest } = useGuest();
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
   const property = useApi(`/properties/${id}`);
+  const [outcomeUnknown, setOutcomeUnknown] = useState(false);
   const [dates, setDates] = useState({ check_in: "", check_out: "" });
   const [quote, setQuote] = useState(null),
     [success, setSuccess] = useState(null),
@@ -65,6 +73,7 @@ export function BookingForm() {
       refreshGuest();
     } catch (error) {
       setError(error);
+      if (error.uncertain) setOutcomeUnknown(true);
       setQuote(null);
     } finally {
       setPending(false);
@@ -137,22 +146,33 @@ export function BookingForm() {
                       name={key}
                       required
                       type="date"
+                      min={
+                        key === "check_in"
+                          ? today
+                          : new Date(
+                              Date.parse(
+                                `${dates.check_in || today}T00:00:00Z`,
+                              ) + 86400000,
+                            )
+                              .toISOString()
+                              .slice(0, 10)
+                      }
                       value={dates[key]}
                       disabled={pending}
                       onInput={(e) => {
                         setDates({ ...dates, [key]: e.target.value });
                         setQuote(null);
-                        setError(null);
+                        if (!outcomeUnknown) setError(null);
                       }}
                     />
                   </Field>
                 ))}
               </div>
               <p className="muted">
-                Check-out must be after check-in. Price is calculated by the
-                server.
+                Check-in must be today or later; check-out must be after
+                check-in. Price is calculated by the server.
               </p>
-              <button disabled={pending || !guestId || error?.uncertain}>
+              <button disabled={pending || !guestId || outcomeUnknown}>
                 {pending ? "Please wait…" : "Review price & wallet"}
               </button>
             </form>
@@ -301,6 +321,9 @@ export function Bookings() {
                     ? "Check in guest"
                     : "Complete stay"}
               </button>
+            )}
+            {detail.data?.status === "COMPLETED" && (
+              <BookingReview key={detail.data.id} booking={detail.data} />
             )}
             <ErrorBox error={error} />
             {error?.uncertain && (

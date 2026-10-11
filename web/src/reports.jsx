@@ -219,6 +219,16 @@ export function Analytics() {
         </button>
       </div>
       <ErrorBox error={error} />
+      {error?.uncertain && (
+        <button
+          onClick={() => {
+            summary.reload();
+            setError(null);
+          }}
+        >
+          Reload summary
+        </button>
+      )}
     </>
   );
 }
@@ -284,22 +294,26 @@ export function Reviews() {
           <section className="card">
             <h2>Top feedback tags</h2>
             {state.data?.topTags.length ? (
-              <table>
-                <thead>
-                  <tr>
-                    <th>Tag</th>
-                    <th>Mentions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {state.data.topTags.map((t) => (
-                    <tr key={t._id}>
-                      <td>{t._id.replaceAll("_", " ")}</td>
-                      <td>{t.count}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div
+                className="tag-chart"
+                aria-label="Top feedback tags by number of mentions"
+              >
+                {state.data.topTags.map((tag) => (
+                  <div className="tag-bar" key={tag._id}>
+                    <div className="tag-bar-label">
+                      <span>{tag._id.replaceAll("_", " ")}</span>
+                      <strong>{tag.count}</strong>
+                    </div>
+                    <div className="bar-track">
+                      <div
+                        style={{
+                          width: `${(tag.count / Math.max(1, ...state.data.topTags.map((t) => t.count))) * 100}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
             ) : (
               <p>No review tags yet.</p>
             )}

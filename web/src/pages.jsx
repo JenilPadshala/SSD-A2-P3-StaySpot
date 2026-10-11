@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   useApi,
@@ -17,6 +17,7 @@ import {
 
 // Property browsing keeps filters and pagination in the URL, including browser Back support.
 export function Browse() {
+  const { role } = useGuest();
   const [params, setParams] = useSearchParams();
   const state = useApi(`/properties?${params}`);
   function filter(event) {
@@ -69,9 +70,11 @@ export function Browse() {
         <Link className="button primary" to="/properties">
           Properties
         </Link>
-        <Link className="button" to="/guests">
-          Guests
-        </Link>
+        {role === "staff" && (
+          <Link className="button" to="/guests">
+            Guests
+          </Link>
+        )}
         <Link className="button" to="/bookings">
           Bookings
         </Link>
@@ -143,7 +146,7 @@ export function Property() {
                 Review booking →
               </Link>
             ) : (
-              <p>Choose a demo guest first.</p>
+              <p>Choose a guest first.</p>
             )}
             <p>
               <Link to={`/reviews?property_id=${id}`}>
@@ -163,8 +166,17 @@ export function Guests() {
   const { setGuestId } = useGuest(),
     [filters, setFilters] = useState({}),
     [selected, setSelected] = useState("");
+  const detailPanel = useRef(null);
   const state = useApi(`/guests?${query(filters)}`),
     detail = useApi(selected ? `/guests/${selected}` : null);
+  function viewGuest(id) {
+    setSelected(id);
+    // Bring the result into view, including when the same guest is selected again.
+    requestAnimationFrame(() => {
+      detailPanel.current?.focus({ preventScroll: true });
+      detailPanel.current?.scrollIntoView({ block: "start" });
+    });
+  }
   function search(event) {
     // Search both names and emails on the server.
     event.preventDefault();
@@ -173,21 +185,45 @@ export function Guests() {
   return (
     <>
       <Heading title="Guests">
-        Find a guest, inspect their wallet, and switch the demo context.
+        Find a guest, inspect their wallet, and switch the selected guest.
       </Heading>
       <form className="filters" onSubmit={search}>
         <Field label="Search guests">
-          <input name="q" placeholder="Name or email" />
+          <input name="q" placeholder="Search by guest name" />
         </Field>
         <button className="primary">Search</button>
       </form>
+      {selected && (
+        <section
+          className="card"
+          ref={detailPanel}
+          tabIndex={-1}
+          aria-label="Selected guest details"
+        >
+          <LoadState state={detail}>
+            <h2>{detail.data?.name}</h2>
+            <h3>Wallet balance: {money(detail.data?.wallet_balance)}</h3>
+            <p title={selected}>Guest ID: {shortId(selected)}</p>
+            <div className="actions">
+              <button className="primary" onClick={() => setGuestId(selected)}>
+                Select guest
+              </button>
+              <Link className="button" to={`/bookings?guest_id=${selected}`}>
+                View bookings
+              </Link>
+              <Link className="button" to={`/wallet?guest_id=${selected}`}>
+                View wallet history
+              </Link>
+            </div>
+          </LoadState>
+        </section>
+      )}
       <LoadState state={state} empty={state.data?.items.length === 0}>
         <div className="card table-wrap">
           <table>
             <thead>
               <tr>
                 <th>Guest</th>
-                <th>Email</th>
                 <th>Wallet</th>
                 <th>Action</th>
               </tr>
@@ -196,10 +232,9 @@ export function Guests() {
               {state.data?.items.map((g) => (
                 <tr key={g.id}>
                   <td>{g.name}</td>
-                  <td>{g.email || "Not provided"}</td>
                   <td>{money(g.wallet_balance)}</td>
                   <td>
-                    <button onClick={() => setSelected(g.id)}>
+                    <button onClick={() => viewGuest(g.id)}>
                       View guest →
                     </button>
                   </td>
@@ -213,28 +248,6 @@ export function Guests() {
         data={state.data}
         onChange={(cursor) => setFilters({ ...filters, cursor })}
       />
-      {selected && (
-        <LoadState state={detail}>
-          <section className="card">
-            <h2>{detail.data?.name}</h2>
-            <h3>Wallet balance: {money(detail.data?.wallet_balance)}</h3>
-            <p>
-              {detail.data?.email || "Email not provided"} · {shortId(selected)}
-            </p>
-            <div className="actions">
-              <button className="primary" onClick={() => setGuestId(selected)}>
-                Use as demo guest
-              </button>
-              <Link className="button" to={`/bookings?guest_id=${selected}`}>
-                View bookings
-              </Link>
-              <Link className="button" to={`/wallet?guest_id=${selected}`}>
-                View wallet history
-              </Link>
-            </div>
-          </section>
-        </LoadState>
-      )}
     </>
   );
 }
@@ -255,7 +268,7 @@ export function Wallet() {
   if (!id)
     return (
       <Heading title="Wallet & audit trail">
-        Choose a demo guest to view their history.
+        Choose a guest to view their history.
       </Heading>
     );
   return (
@@ -263,13 +276,15 @@ export function Wallet() {
       <Heading title="Wallet & audit trail">
         {guest.data?.name} · Read-only history of balance changes
       </Heading>
-      <Metrics
-        items={[
-          ["Current wallet balance", money(state.data?.wallet_balance)],
-          ["Selected period debits", money(state.data?.debits)],
-          ["Selected period credits", money(state.data?.credits)],
-        ]}
-      />
+      {state.data && !state.loading && !state.error && (
+        <Metrics
+          items={[
+            ["Current wallet balance", money(state.data?.wallet_balance)],
+            ["Selected period debits", money(state.data?.debits)],
+            ["Selected period credits", money(state.data?.credits)],
+          ]}
+        />
+      )}
       <form className="filters" onSubmit={filter}>
         <Field label="From">
           <input name="from" type="date" />

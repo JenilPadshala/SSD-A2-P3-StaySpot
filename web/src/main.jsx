@@ -7,7 +7,7 @@ import {
   NavLink,
   Navigate,
 } from "react-router-dom";
-import { GuestContext, RecordPicker, request, ErrorBox } from "./shared";
+import { GuestContext, RecordPicker, useApi, ErrorBox, Field } from "./shared";
 import { Browse, Property, Guests, Wallet } from "./pages";
 import { BookingForm, Bookings } from "./bookings";
 import { Analytics, Reviews } from "./reports";
@@ -16,36 +16,36 @@ import "./style.css";
 
 // The shell owns demo actor selection; switching actors remounts views to clear stale forms.
 function App() {
+  const [role, setRole] = useState(
+    localStorage.getItem("stayspot-role") === "staff" ? "staff" : "guest",
+  );
   const [guestId, setGuestId] = useState(
     localStorage.getItem("stayspot-guest") || "",
   );
-  const [open, setOpen] = useState(false),
-    [error, setError] = useState(null);
+  const [open, setOpen] = useState(false);
   const [revision, setRevision] = useState(0);
+  const initialGuest = useApi(guestId ? null : "/guests?limit=1");
   useEffect(() => {
-    if (!guestId)
-      request("/guests?limit=1")
-        .then((data) => {
-          if (data.items[0]) setGuestId(data.items[0].id);
-        })
-        .catch(setError);
-  }, [guestId]);
+    const first = initialGuest.data?.items[0];
+    if (!guestId && first) {
+      setGuestId(first.id);
+      localStorage.setItem("stayspot-guest", first.id);
+    }
+  }, [guestId, initialGuest.data]);
   // Confirm before discarding a partially entered booking when changing the demo actor.
   function switchGuest(id) {
     if (
-      window.location.pathname.includes("/book") &&
-      !window.confirm(
-        "Switch demo guest and discard any unfinished booking form?",
-      )
+      /^\/properties\/[^/]+\/book$/.test(window.location.pathname) &&
+      !window.confirm("Switch guest and discard any unfinished booking form?")
     )
       return;
     setGuestId(id);
     localStorage.setItem("stayspot-guest", id);
-    setError(null);
   }
   return (
     <GuestContext.Provider
       value={{
+        role,
         guestId,
         setGuestId: switchGuest,
         revision,
@@ -56,19 +56,42 @@ function App() {
         <NavLink className="brand" to="/properties">
           StaySpot<span>A place for every stay.</span>
         </NavLink>
-        <div className="actor">
-          <RecordPicker
-            type="guests"
-            label="Demo guest"
-            value={guestId}
-            onChange={switchGuest}
-          />
+        <div className="actor role-controls">
+          <Field label="View as">
+            <select
+              value={role}
+              onChange={(event) => {
+                if (
+                  /^\/properties\/[^/]+\/book$/.test(
+                    window.location.pathname,
+                  ) &&
+                  !window.confirm(
+                    "Switch role and discard any unfinished booking form?",
+                  )
+                )
+                  return;
+                setRole(event.target.value);
+                localStorage.setItem("stayspot-role", event.target.value);
+                setOpen(false);
+              }}
+            >
+              <option value="guest">Guest</option>
+              <option value="staff">Staff</option>
+            </select>
+          </Field>
+          {role === "guest" && (
+            <RecordPicker
+              type="guests"
+              label="Selected guest"
+              value={guestId}
+              onChange={switchGuest}
+              onMissing={() => {
+                localStorage.removeItem("stayspot-guest");
+                setGuestId("");
+              }}
+            />
+          )}
         </div>
-        <span className="demo-label">
-          Guest / Platform staff
-          <br />
-          <small>Demo workspace · no login</small>
-        </span>
         <button
           className="menu-toggle"
           onClick={() => setOpen(!open)}
@@ -89,19 +112,17 @@ function App() {
               ["/analytics", "Analytics"],
               ["/hotspots", "Search hotspots"],
               ["/reviews", "Reviews"],
-            ].map(([path, title]) => (
-              <NavLink key={path} to={path} onClick={() => setOpen(false)}>
-                {title}
-              </NavLink>
-            ))}
+            ]
+              .filter(([path]) => path !== "/guests" || role === "staff")
+              .map(([path, title]) => (
+                <NavLink key={path} to={path} onClick={() => setOpen(false)}>
+                  {title}
+                </NavLink>
+              ))}
           </nav>
-          <p className="sidebar-note">
-            StaySpot / Project 3<br />
-            Amounts in currency units
-          </p>
         </aside>
-        <main key={guestId}>
-          <ErrorBox error={error} />
+        <main key={`${role}:${guestId}`}>
+          <ErrorBox error={initialGuest.error} retry={initialGuest.reload} />
           <Routes>
             <Route path="/" element={<Navigate to="/properties" replace />} />
             <Route path="/properties" element={<Browse />} />
@@ -109,7 +130,16 @@ function App() {
             <Route path="/properties/:id/book" element={<BookingForm />} />
             <Route path="/bookings" element={<Bookings />} />
             <Route path="/bookings/:id" element={<Bookings />} />
-            <Route path="/guests" element={<Guests />} />
+            <Route
+              path="/guests"
+              element={
+                role === "staff" ? (
+                  <Guests />
+                ) : (
+                  <Navigate to="/properties" replace />
+                )
+              }
+            />
             <Route path="/wallet" element={<Wallet />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/hotspots" element={<Hotspots />} />

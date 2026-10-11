@@ -56,8 +56,13 @@ function SearchMap({ origin, pins }) {
         .addTo(markers.current)
         .bindTooltip(text);
     });
-    map.current.setView(center, 12);
   }, [origin, pins]);
+  useEffect(() => {
+    map.current.setView(
+      [Number(origin.latitude), Number(origin.longitude)],
+      12,
+    );
+  }, [origin]);
   return (
     <div
       className="map"
@@ -76,6 +81,7 @@ export function Hotspots() {
   const [data, setData] = useState(null),
     [cursor, setCursor] = useState(null),
     [paused, setPaused] = useState(false);
+  const [pinError, setPinError] = useState(null);
   const [error, setError] = useState(null),
     [loading, setLoading] = useState(true),
     [pending, setPending] = useState(false),
@@ -124,13 +130,13 @@ export function Hotspots() {
   async function addPin() {
     // A fresh search at the origin makes the two-hour TTL dataset easy to demonstrate.
     setPending(true);
-    setError(null);
+    setPinError(null);
     try {
       await request("/search/sessions", "POST", origin);
       setCursor(null);
       setRevision((n) => n + 1);
     } catch (error) {
-      setError(error);
+      setPinError(error);
     } finally {
       setPending(false);
     }
@@ -164,30 +170,44 @@ export function Hotspots() {
           />
         </Field>
         <button className="primary">Search this area</button>
-        <button type="button" disabled={pending} onClick={addPin}>
-          {pending ? "Adding…" : "Drop a demo pin"}
+        <button
+          type="button"
+          disabled={pending || pinError?.uncertain}
+          onClick={addPin}
+        >
+          {pending ? "Adding…" : "Add search pin"}
         </button>
       </form>
       <ErrorBox error={error} retry={() => setRevision((n) => n + 1)} />
+      <ErrorBox error={pinError} />
+      {pinError?.uncertain && (
+        <button
+          onClick={() => {
+            setCursor(null);
+            setRevision((n) => n + 1);
+            setPinError(null);
+          }}
+        >
+          Refresh pins
+        </button>
+      )}
       <div className="split">
         <section className="card">
           <h2>Search area</h2>
           <SearchMap origin={origin} pins={data?.items || []} />
-          <p className="muted">
-            Dashed circle = 5 km radius · Map tiles require internet access.
-          </p>
+          <p className="muted">Dashed circle = 5 km radius</p>
         </section>
         <section className="card">
           <h2>Nearest search pins</h2>
           <p className={error ? "error-text" : "accent"}>
             {paused ? "Paused" : "Live"} · Updated {stamp(data?.updated_at)}
-            {error && " · Showing last successful results"}
+            {error && data && " · Showing last successful results"}
           </p>
           {loading ? (
             <p role="status">Loading pins…</p>
           ) : !data?.items.length ? (
             <p>
-              No recent searches here. Try another origin or drop a demo pin.
+              No recent searches here. Try another origin or add a search pin.
             </p>
           ) : (
             <table>
