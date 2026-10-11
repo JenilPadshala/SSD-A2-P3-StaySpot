@@ -45,6 +45,10 @@ Charts retain a readable data-table alternative; map and distance list stack.
 
 ## Scope and assumptions
 
+Completed stays now include a guest review form in booking details (rating, optional
+tags and comment), followed by a saved-review display. This extends the original
+wireframes.
+
 No cancellation, refunds, photo uploads, account signup, payment gateway, or host
 property editing is designed because the inherited backend does not support them.
 The schema has no currency field: amounts are currency units, with a single chosen

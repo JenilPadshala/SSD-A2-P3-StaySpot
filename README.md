@@ -38,18 +38,29 @@ booking procedure and additive API support script. It does **not** reseed data o
 recreate the materialized view. For a fresh database, first follow the inherited
 setup below, then run this migration.
 
+For existing MongoDB data, reapply the collection setup before using guest-written
+reviews (this updates validators and adds an index without deleting documents):
+
+```bash
+mongosh "mongodb://127.0.0.1:27017/stayspot" mongo/01_collections_and_indexes.js
+```
+
+Use your configured connection URI and `STAYSPOT_MONGO_DB` for a non-default local database.
+
 ### Screens and choices
 
 - Browse properties, guests and bookings with server-side filters and 25-row pages.
-- Select a demo guest in the header; search the selector to find guests beyond the first page.
+- Choose Guest or Staff in the header. Guest mode shows a searchable name dropdown; only Staff mode exposes the Guests page, including direct-route access.
 - Review a server-calculated booking quote, confirm the wallet debit, and see the
   exact trigger-created audit entry. Move bookings through their three statuses.
 - View date-filtered wallet history and period totals.
 - View per-property moving averages, all-history dense rankings, summary totals
   and a refresh button with a persistent timestamp.
 - Explore search hotspots within 5 km, with ten-second polling, pause/resume,
-  distance-sorted pages and a demo-pin button. Search pins expire after two hours.
+  distance-sorted pages and an Add search pin button. Search pins expire after two hours.
 - View review facets for one property or all reviews, plus flexible amenities.
+- After completing a stay, open its booking details and submit a 1–5 star rating,
+  optional feedback tags, and an optional written review. Each booking allows one review.
 
 React with Vite, React Router and plain CSS keeps the frontend small and familiar.
 Express uses `pg` and the MongoDB driver directly, leaving transactions, triggers,
@@ -58,8 +69,9 @@ table alternative; Leaflet displays the map with attributed OpenStreetMap tiles.
 
 ### Scope and behavior
 
-- Demo guest switching is not authentication; this is a local assignment app.
+- Guest/Staff selection is a persisted UI mode, not authentication; this is a local assignment app. The Guests route is guarded in the frontend; API access is not authenticated.
 - Amounts are currency units because the inherited schema has no currency field.
+- Booking check-in must be today or later, using Asia/Kolkata for both the form and API. Check-out must be later than check-in. Past dates are rejected on quotes and final submissions.
 - Dates are calendar dates; server date filters use UTC boundaries. Timestamps are
   displayed in the viewer's local time.
 - The moving average excludes days without bookings, preserving the inherited query.
@@ -72,8 +84,14 @@ table alternative; Leaflet displays the map with attributed OpenStreetMap tiles.
   or reload its status before retrying. The browser does not automatically retry writes.
 - Empty catalogs and expired search datasets show empty states. Map tiles need internet
   access; coordinates, distances and the result list remain available through the API.
-- Property editing, review submission, refunds and wallet top-ups are outside the current
+- Property editing, refunds and wallet top-ups are outside the current
   wireframes and required Step 3 scope. Audit history has no write endpoint.
+- Guest-written reviews require a `COMPLETED` booking and its guest selected in the
+  header. This actor check is not authentication. Reviews cannot be edited or deleted
+  through the app. Existing seeded reviews remain valid without booking IDs.
+- Review submissions appear in the existing property/all-property analytics on the
+  next load. Duplicate requests are rejected by a unique partial MongoDB index.
+  If submission is interrupted, use "Check saved review" before trying again.
 
 ### Verification
 
@@ -81,14 +99,20 @@ table alternative; Leaflet displays the map with attributed OpenStreetMap tiles.
 cd api
 npm test
 # In web/:
+npm test
 npm run build
 ```
 
 The API tests use both running databases. They create isolated fixtures and clean them
 up, covering booking success, competing debits, insufficient funds, status conflicts,
-audit totals, pagination, summary refresh, map pins and review facets. Tests refresh the
-materialized summary and its timestamp. Browser checks also cover booking through
-completion, wallet history, analytics, map updates and responsive navigation.
+audit totals, pagination, summary refresh, map pins, review facets, and guest-written
+review validation, eligibility and concurrent duplicate prevention. Tests refresh the
+materialized summary and its timestamp. Frontend unit tests cover recovery guidance.
+On 11 October 2026, all 14 API tests, 3 frontend tests and the production build passed.
+Browser checks covered the main screens, a booking quote, wallet failure states,
+map zoom preservation during polling and recovery of a deleted guest selection.
+Further browser testing was stopped at the user's request; the new review form was
+verified by source inspection/build, with submission behavior covered by API tests.
 
 ### SQL changes for Step 3
 
@@ -96,16 +120,18 @@ completion, wallet history, analytics, map updates and responsive navigation.
 - `04_stored_procedures.sql`: returns the new booking ID through an optional `INOUT`
   parameter; existing five-argument calls still work.
 - `07_api_support.sql`: adds persistent refresh metadata and a guest-booking index.
-- MongoDB source scripts are unchanged for Step 3. The Express routes parameterize
-  and adapt the inherited `$geoNear` and `$facet` pipelines for browser requests.
+- `mongo/01_collections_and_indexes.js`: accepts optional review `booking_id` values
+  and adds the `one_review_per_booking` unique partial index. Historical reviews
+  without a booking ID are unaffected. The API still uses `$geoNear` and `$facet`.
+- `data_generation/postgres_seeder.py`: creates 5,000 unique, reproducible fictional
+  rental titles instead of arbitrary Faker sentences, without changing record counts.
 
 
 CS6.302 - Software System Development | Team: Group 12
 
 ## 1. Project
 
-**StaySpot** is a vacation-rental platform. This repo implements the database layer only
-(no application/front-end code), split across:
+**StaySpot** is a vacation-rental platform with a React frontend, Express API, and a database layer split across:
 
 - **PostgreSQL** — transactional core: guests, wallets, properties, bookings, audit trail.
 - **MongoDB** — flexible/high-volume data: property amenities, reviews, and geospatial
@@ -117,7 +143,7 @@ CS6.302 - Software System Development | Team: Group 12
 README.md
 
 docs/
-  relational__erd.png        # PostgreSQL schema ERD
+  relational_erd.png        # PostgreSQL schema ERD
   mongo_schema_map.json      # MongoDB collection field/validator map
 
 sql/
@@ -297,7 +323,7 @@ limitations, and database effects. The current repeatable API integration suite 
 `npm test` from `api/`; the old standalone Python verification script was removed
 from the submission.
 
-`performance/verification_results.json` records successful checks and observed counts.
+The Verification section above records the current test results.
 `performance/postgres_explain_analyzes.txt` contains real `EXPLAIN (ANALYZE, BUFFERS)`
 plans, and `performance/mongo_execution_stats.json` contains actual workflow outputs
 and execution statistics. Selective PostgreSQL lookups use indexes; whole-dataset
@@ -430,7 +456,45 @@ and hotspot results will decrease over time. The TTL monitor deletes asynchronou
 
 ## 11. Repo / Commit
 
-- GitHub URL: [https://github.com/Jyoti2026201001/Group12_a1](https://github.com/Jyoti2026201001/Group12_a1)
+- GitHub URL: [https://github.com/JenilPadshala/SSD-A2-P3-StaySpot](https://github.com/JenilPadshala/SSD-A2-P3-StaySpot)
 
 
 
+
+
+## Rebuilding local data intentionally
+
+The local `stayspot` PostgreSQL and MongoDB databases were deleted and recreated on
+11 October 2026 at the user's request. Seed results: 10,000 guests, 5,000 distinct
+property titles, 100,000 bookings, 105,039 wallet audit entries, 1,000 amenities
+records, 30,000 reviews and 550,000 search sessions. Search sessions expire after
+2 hours; their live count will decrease. Cross-database references were verified.
+
+To repeat a reset, stop the API first. These commands permanently replace local
+StaySpot data; they are not needed for ordinary startup or the review index update.
+Commands below assume local services and the default `stayspot` database names.
+
+```bash
+dropdb stayspot
+createdb stayspot
+mongosh "mongodb://127.0.0.1:27017/stayspot" --eval 'db.dropDatabase()'
+psql -d stayspot -f sql/01_schema_ddl.sql
+psql -d stayspot -f sql/02_indexes.sql
+psql -d stayspot -f sql/03_triggers_and_audit.sql
+psql -d stayspot -f sql/04_stored_procedures.sql
+psql -d stayspot -f sql/05_materialized_views.sql
+psql -d stayspot -f sql/07_api_support.sql
+mongosh "mongodb://127.0.0.1:27017/stayspot" mongo/01_collections_and_indexes.js
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r data_generation/requirements.txt
+python data_generation/postgres_seeder.py
+python data_generation/mongo_seeder.py
+```
+
+Export the same `STAYSPOT_*` connection variables for the seeders and API when
+using custom settings; the Python seeders do not automatically load `api/.env`.
+Start the API and frontend using the instructions above, then click **Refresh summary**
+on Analytics to populate totals and record the refresh time. Old saved guest IDs
+recover to an available guest automatically. Do not rerun the seeders on populated
+databases; they deliberately reject appending another full dataset.

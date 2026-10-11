@@ -20,3 +20,19 @@
 | `GET /api/search/hotspots` | Query: `latitude`, `longitude`; optional: `limit`, `cursor` | Search pins from the last two hours within 5 km, ordered by distance (`id`, coordinates, timestamp, `distance_meters`); distance-band counts, `next_cursor`, `updated_at`. |
 | `POST /api/search/sessions` | Body: `latitude`, `longitude` | Created search pin: session `id`, coordinates and timestamp; or field-validation errors. |
 | `GET /api/reviews/analytics` | Optional query: `property_id` (omit for all properties) | Rating distribution, top tags with counts, average rating and review count. |
+
+## Guest-written reviews
+
+| Endpoint | Inputs | Outputs |
+|---|---|---|
+| `GET /api/bookings/{id}/review` | Booking UUID | Saved review or `null`; 404 if the booking does not exist. |
+| `POST /api/bookings/{id}/review` | Booking UUID; body: `guest_id`, integer `rating` (1–5), optional `tags` (up to 12 strings), optional `comment` (up to 2,000 characters) | 201 with `booking_id`, `property_id`, `guest_id`, `rating`, deduplicated `tags`, trimmed `comment`, `created_at`. |
+
+The selected guest must own the booking (403 otherwise), and the booking must be
+`COMPLETED` (409 `STAY_NOT_COMPLETED` otherwise). One review is allowed per booking,
+including concurrent requests; duplicates return 409 `REVIEW_EXISTS`. Invalid
+fields return 400. Tags use lowercase letters/digits separated by underscores and
+are at most 40 characters each. Property and author IDs are derived from the
+booking, not accepted as independent client claims. Actor switching is not login
+or authorization for a production system. Existing seeded reviews without a
+booking ID continue to participate in analytics. Reviews have no edit/delete API.
