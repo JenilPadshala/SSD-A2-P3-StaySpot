@@ -18,6 +18,7 @@
 - In `sql/03_triggers_and_audit.sql`, exposed the trigger-created audit ID through a transaction-local setting so the booking response returns the exact entry.
 - In `sql/04_stored_procedures.sql`, added an optional booking-ID output while preserving five-argument calls.
 - Added `sql/07_api_support.sql` with persistent summary-refresh metadata and an index for guest booking history. Applied these SQL updates to the local database.
+- Updated `data_generation/postgres_seeder.py` to replace arbitrary Faker sentences with 5,000 unique, reproducible fictional property names. This makes property browsing and search easier to demonstrate without changing seed record counts.
 
 ## Suggestions for original authors
 
